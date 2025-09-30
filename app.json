@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Rastreo Lite",
-    "slug": "expo-rastreo-lite",
+    "slug": "apprastreo",
     "scheme": "rastreo",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -20,7 +20,9 @@
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
         "WAKE_LOCK",
-        "INTERNET"
+        "INTERNET",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "plugins": [
@@ -28,8 +30,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "local-only"
+        "projectId": "00023824-8bfd-40b3-8fa2-cad844d1be19"
       }
-    }
+    },
+    "owner": "mr-dany"
   }
 }
