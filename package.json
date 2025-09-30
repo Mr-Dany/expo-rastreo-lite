@@ -1,0 +1,24 @@
+{
+  "name": "expo-rastreo-lite",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "build:apk": "expo run:android --variant release",
+    "lint": "echo \"(optional) add eslint\""
+  },
+  "dependencies": {
+    "expo": "~51.0.23",
+    "react": "18.2.0",
+    "react-native": "0.74.5",
+    "expo-location": "~16.5.5",
+    "expo-task-manager": "~11.8.3",
+    "expo-application": "~5.9.1",
+    "expo-file-system": "~17.0.1",
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "@react-native-community/netinfo": "11.3.1"
+  },
+  "devDependencies": {}
+}
