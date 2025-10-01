@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import * as Application from "expo-application";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
+import Constants from "expo-constants";
 // Reutiliza tus módulos existentes si ya los tienes:
 import { offlineDB, LocationPoint } from "./lib/offline-tracking";
 import { syncService } from "./lib/sync-tracking";
@@ -16,9 +17,14 @@ export default function TrackingDashboard() {
   const [elapsed, setElapsed] = useState(0);
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [deviceAlias, setDeviceAlias] = useState("");
-  const [apiEndpoint, setApiEndpoint] = useState("");
+  const [apiEndpoint, setApiEndpoint] = useState("https://apigps-gnip.onrender.com/api/locations"); // Updated API endpoint
   const [showSettings, setShowSettings] = useState(false);
   const [deviceId, setDeviceId] = useState("");
+  const [deviceName, setDeviceName] = useState(""); // New state for device name
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false); // Estado de sincronización automática
+  
+  // Detectar si estamos en web o móvil
+  const isWeb = Platform.OS === "web";
 
   const locSubRef = useRef<Location.LocationSubscription | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -27,18 +33,50 @@ export default function TrackingDashboard() {
   useEffect(() => {
     // Cargar config guardada
     (async () => {
-      const alias = (await AsyncStorage.getItem("lm_device_alias")) || "";
-      const endpoint = (await AsyncStorage.getItem("api_endpoint")) || "";
-      setDeviceAlias(alias);
+      const endpoint = (await AsyncStorage.getItem("api_endpoint")) || "https://apigps-gnip.onrender.com/api/locations";
       setApiEndpoint(endpoint);
-      if (!alias || !endpoint) setShowSettings(true);
-
-      // ID de dispositivo
-      if (Platform.OS === "android") {
-        setDeviceId(Application.androidId ?? "UNKNOWN-ANDROID");
+      
+      if (isWeb) {
+        // En web: cargar configuración guardada o usar valores por defecto
+        const alias = (await AsyncStorage.getItem("lm_device_alias")) || "";
+        const savedDeviceId = (await AsyncStorage.getItem("lm_device_id")) || "";
+        
+        setDeviceAlias(alias || "Dispositivo Web");
+        setDeviceId(savedDeviceId || "WEB-DEVICE-" + Math.random().toString(36).substr(2, 9));
+        setDeviceName("Dispositivo Web");
+        
+        // En web, mostrar configuración si no hay datos guardados
+        if (!alias || !savedDeviceId) {
+          setShowSettings(true);
+        }
       } else {
-        const id = await Application.getIosIdForVendorAsync();
-        setDeviceId(id ?? "UNKNOWN-IOS");
+        // En móvil: usar información del sistema automáticamente
+        let systemDeviceId = "";
+        let systemDeviceName = "";
+        
+        try {
+          if (Platform.OS === "android") {
+            systemDeviceId = Application.getAndroidId() ?? "UNKNOWN-ANDROID";
+            systemDeviceName = `${Platform.OS} Device ${systemDeviceId.substring(0, 8)}`;
+          } else {
+            const id = await Application.getIosIdForVendorAsync();
+            systemDeviceId = id ?? "UNKNOWN-IOS";
+            systemDeviceName = `${Platform.OS} Device ${systemDeviceId.substring(0, 8)}`;
+          }
+          
+          setDeviceId(systemDeviceId);
+          setDeviceAlias(systemDeviceName);
+          setDeviceName(systemDeviceName);
+          
+          // Guardar automáticamente en móvil
+          await AsyncStorage.setItem("lm_device_alias", systemDeviceName);
+          await AsyncStorage.setItem("lm_device_id", systemDeviceId);
+        } catch (error) {
+          console.log("Error getting device info:", error);
+          setDeviceId("UNKNOWN-DEVICE");
+          setDeviceAlias("Dispositivo");
+          setDeviceName("Dispositivo");
+        }
       }
 
       await reloadPending();
@@ -50,11 +88,24 @@ export default function TrackingDashboard() {
   }, []);
 
   useEffect(() => {
-    if (isOnline && apiEndpoint) {
+    // En web, siempre intentar sincronización automática si hay endpoint
+    // En móvil, solo si hay internet detectado
+    const shouldAutoSync = isWeb ? Boolean(apiEndpoint) : (isOnline && apiEndpoint);
+    
+    if (shouldAutoSync) {
+      console.log(`Iniciando sincronización automática cada 30 segundos... (Web: ${isWeb}, Online: ${isOnline})`);
       syncService.startAutoSync(apiEndpoint, 30000);
+      setIsAutoSyncing(true);
+    } else {
+      console.log(`Pausando sincronización automática... (Web: ${isWeb}, Online: ${isOnline})`);
+      syncService.stopAutoSync();
+      setIsAutoSyncing(false);
     }
-    return () => syncService.stopAutoSync();
-  }, [isOnline, apiEndpoint]);
+    return () => {
+      syncService.stopAutoSync();
+      setIsAutoSyncing(false);
+    };
+  }, [isOnline, apiEndpoint, isWeb]);
 
   const reloadPending = async () => {
     const count = await offlineDB.getLocationCount();
@@ -62,10 +113,13 @@ export default function TrackingDashboard() {
   };
 
   const startTracking = async () => {
-    if (!deviceAlias || !apiEndpoint) {
+    // Removed check for deviceAlias and apiEndpoint since they now have defaults
+    
+    if (!deviceAlias) {
       setShowSettings(true);
       return;
     }
+    
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== "granted") {
       Alert.alert("Permiso requerido", "Necesitamos el permiso de ubicación para rastrear.");
@@ -109,16 +163,31 @@ export default function TrackingDashboard() {
 
   const manualSync = async () => {
     if (!apiEndpoint) {
-      Alert.alert("Configura el endpoint primero");
+      Alert.alert("Error", "Configura la URL del API primero");
       return;
     }
-    const res = await syncService.syncLocations(apiEndpoint);
-    if (res.success) {
-      setLastSync(new Date());
-      await reloadPending();
-      Alert.alert("Sincronizado", `${res.synced} ubicaciones enviadas`);
-    } else {
-      Alert.alert("Error", String(res.error ?? "No se pudo sincronizar"));
+
+    console.log('Iniciando sincronización manual...');
+    const pendingBefore = await offlineDB.getLocationCount();
+    console.log(`Ubicaciones pendientes antes: ${pendingBefore}`);
+
+    try {
+      const res = await syncService.syncLocations(apiEndpoint);
+      console.log('Resultado de sincronización:', res);
+      
+      if (res.success) {
+        setLastSync(new Date());
+        await reloadPending();
+        const pendingAfter = await offlineDB.getLocationCount();
+        console.log(`Ubicaciones pendientes después: ${pendingAfter}`);
+        Alert.alert("Sincronizado", `${res.synced || 0} ubicaciones enviadas correctamente`);
+      } else {
+        console.log('Error en sincronización:', res.error);
+        Alert.alert("Error de sincronización", res.error || "No se pudo sincronizar");
+      }
+    } catch (error) {
+      console.error("Error en sincronización manual:", error);
+      Alert.alert("Error", "Error al sincronizar: " + error.message);
     }
   };
 
@@ -129,20 +198,50 @@ export default function TrackingDashboard() {
     return `${h}:${m}:${z}`;
   };
 
+  // Remove the settings screen entirely
+  
   if (showSettings) {
     return (
       <View style={styles.screen}>
         <View style={styles.card}>
-          <Text style={styles.title}>Configuración Inicial</Text>
-          <Text style={styles.sub}>Configura tu dispositivo antes de comenzar</Text>
+          <Text style={styles.title}>
+            {isWeb ? "Configuración de Dispositivo Web" : "Configuración de API"}
+          </Text>
+          <Text style={styles.sub}>
+            {isWeb 
+              ? "Configura el nombre e ID del dispositivo para pruebas en web" 
+              : "Solo necesitas configurar la URL del API, el dispositivo se configura automáticamente"
+            }
+          </Text>
 
-          <Text style={styles.label}>Nombre del Dispositivo</Text>
-          <TextInput
-            value={deviceAlias}
-            onChangeText={setDeviceAlias}
-            placeholder="Ej: samsung s9"
-            style={styles.input}
-          />
+          {isWeb && (
+            <>
+              <Text style={styles.label}>Nombre del Dispositivo</Text>
+              <TextInput
+                value={deviceAlias}
+                onChangeText={setDeviceAlias}
+                placeholder="Ej: Mi Dispositivo Web"
+                style={styles.input}
+              />
+
+              <Text style={styles.label}>ID del Dispositivo</Text>
+              <TextInput
+                value={deviceId}
+                onChangeText={setDeviceId}
+                placeholder="Ingresa el ID del dispositivo"
+                autoCapitalize="none"
+                style={styles.input}
+              />
+            </>
+          )}
+
+          {!isWeb && (
+            <View style={styles.infoBox}>
+              <Text style={styles.infoTitle}>Información del Dispositivo (Automática)</Text>
+              <Text style={styles.mono}>Nombre: {deviceAlias}</Text>
+              <Text style={styles.mono}>ID: {deviceId}</Text>
+            </View>
+          )}
 
           <Text style={styles.label}>URL del API</Text>
           <TextInput
@@ -153,19 +252,24 @@ export default function TrackingDashboard() {
             style={styles.input}
           />
 
-          <View style={styles.infoBox}>
-            <Text style={styles.infoTitle}>ID del Dispositivo:</Text>
-            <Text style={styles.mono}>{deviceId}</Text>
-          </View>
-
           <Pressable
             style={styles.button}
             onPress={async () => {
-              if (!deviceAlias || !apiEndpoint) {
-                Alert.alert("Completa todos los campos");
-                return;
+              if (isWeb) {
+                // En web: validar que se ingresaron todos los campos
+                if (!deviceAlias || !deviceId || !apiEndpoint) {
+                  Alert.alert("Completa todos los campos");
+                  return;
+                }
+                await AsyncStorage.setItem("lm_device_alias", deviceAlias);
+                await AsyncStorage.setItem("lm_device_id", deviceId);
+              } else {
+                // En móvil: solo validar endpoint, los otros datos ya están configurados automáticamente
+                if (!apiEndpoint) {
+                  Alert.alert("Completa la URL del API");
+                  return;
+                }
               }
-              await AsyncStorage.setItem("lm_device_alias", deviceAlias);
               await AsyncStorage.setItem("api_endpoint", apiEndpoint);
               setShowSettings(false);
             }}
@@ -176,6 +280,7 @@ export default function TrackingDashboard() {
       </View>
     );
   }
+  
 
   return (
     <View style={styles.screen}>
@@ -184,9 +289,11 @@ export default function TrackingDashboard() {
         <View style={[styles.badge, { backgroundColor: isOnline ? "#dcfce7" : "#fee2e2", borderColor: isOnline ? "#86efac" : "#fecaca" }]}>
           <Text style={{ color: isOnline ? "#166534" : "#991b1b" }}>{isOnline ? "En línea" : "Sin conexión"}</Text>
         </View>
-        <Pressable onPress={() => setShowSettings(true)} style={styles.settingsBtn}>
-          <Text>⚙️</Text>
-        </Pressable>
+        {isWeb && (
+          <Pressable onPress={() => setShowSettings(true)} style={styles.settingsBtn}>
+            <Text>⚙️</Text>
+          </Pressable>
+        )}
       </View>
 
       <View style={styles.card}>
@@ -236,8 +343,21 @@ export default function TrackingDashboard() {
           <Text style={styles.mono}>{deviceId.slice(0, 15)}...</Text>
         </View>
         <View style={styles.infoRow}>
+          <Text style={styles.muted}>Nombre:</Text>
+          <Text style={styles.mono}>{deviceName}</Text>
+        </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.muted}>API Endpoint:</Text>
+          <Text style={styles.mono} numberOfLines={1} ellipsizeMode="tail">{apiEndpoint}</Text>
+        </View>
+        <View style={styles.infoRow}>
           <Text style={styles.muted}>Sincronización:</Text>
-          <Text>{isOnline ? "Automática cada 30s" : "Pausada (sin conexión)"}</Text>
+          <Text style={{ color: isAutoSyncing ? "#16a34a" : "#dc2626" }}>
+            {isOnline 
+              ? (isAutoSyncing ? "Automática activa (30s)" : "Configurando...") 
+              : "Pausada (sin conexión)"
+            }
+          </Text>
         </View>
       </View>
     </View>

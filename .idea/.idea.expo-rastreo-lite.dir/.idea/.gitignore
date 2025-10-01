@@ -1,0 +1,13 @@
+﻿# Archivos ignorados predeterminados
+/shelf/
+/workspace.xml
+# Archivos ignorados por Rider
+/contentModel.xml
+/projectSettingsUpdater.xml
+/modules.xml
+/.idea.expo-rastreo-lite.iml
+# Solicitudes de cliente HTTP basadas en editor
+/httpRequests/
+# Datasource local storage ignored files
+/dataSources/
+/dataSources.local.xml

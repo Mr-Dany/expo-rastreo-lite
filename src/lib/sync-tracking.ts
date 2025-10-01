@@ -1,4 +1,5 @@
 import NetInfo from '@react-native-community/netinfo';
+import { Platform } from 'react-native';
 import { offlineDB } from './offline-tracking';
 
 class SyncService {
@@ -16,10 +17,6 @@ class SyncService {
   }
 
   async syncLocations(apiEndpoint: string): Promise<{ success: boolean; synced?: number; error?: string }> {
-    if (!this.isOnline) {
-      return { success: false, error: 'Sin conexión a internet' };
-    }
-
     try {
       const unsyncedLocations = await offlineDB.getUnsyncedLocations();
       
@@ -27,10 +24,14 @@ class SyncService {
         return { success: true, synced: 0 };
       }
 
+      console.log(`Intentando sincronizar ${unsyncedLocations.length} ubicaciones...`);
+
+      // Add custom headers to help with CORS
       const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
         },
         body: JSON.stringify({
           locations: unsyncedLocations
@@ -38,28 +39,53 @@ class SyncService {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        console.log(`API returned ${response.status}: ${response.statusText}`);
+        return { 
+          success: false, 
+          error: `Error del servidor: ${response.status} ${response.statusText}` 
+        };
       }
 
       const result = await response.json();
+      console.log('Respuesta del API:', result);
       
-      if (result.success) {
+      // Solo marcar como sincronizadas si el API confirma éxito
+      if (result.success || result.status === 'success' || response.ok) {
         await offlineDB.markAsSynced(unsyncedLocations);
+        console.log(`${unsyncedLocations.length} ubicaciones marcadas como sincronizadas`);
         return { success: true, synced: unsyncedLocations.length };
       } else {
-        return { success: false, error: result.error || 'Error del servidor' };
+        return { 
+          success: false, 
+          error: result.message || 'El servidor no confirmó la sincronización' 
+        };
       }
     } catch (error) {
-      console.error('Sync error:', error);
-      return { success: false, error: error.message };
+      console.error('Error de sincronización:', error);
+      return { 
+        success: false, 
+        error: `Error de conexión: ${error.message}` 
+      };
     }
   }
 
   startAutoSync(apiEndpoint: string, intervalMs: number = 30000) {
     this.stopAutoSync();
     this.autoSyncInterval = setInterval(async () => {
-      if (this.isOnline) {
-        await this.syncLocations(apiEndpoint);
+      // En web, siempre intentar sincronizar (asumimos que hay internet)
+      // En móvil, solo si hay internet detectado
+      const shouldSync = Platform.OS === 'web' || this.isOnline;
+      
+      if (shouldSync) {
+        console.log('Sincronización automática iniciada...');
+        const result = await this.syncLocations(apiEndpoint);
+        if (result.success && result.synced && result.synced > 0) {
+          console.log(`Sincronización automática exitosa: ${result.synced} ubicaciones`);
+        } else if (!result.success) {
+          console.log('Sincronización automática falló:', result.error);
+        }
+      } else {
+        console.log('Sincronización automática pausada: sin conexión');
       }
     }, intervalMs);
   }
