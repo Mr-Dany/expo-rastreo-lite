@@ -17,7 +17,7 @@ export default function TrackingDashboard() {
   const [elapsed, setElapsed] = useState(0);
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [deviceAlias, setDeviceAlias] = useState("");
-  const [apiEndpoint, setApiEndpoint] = useState("https://apigps-gnip.onrender.com/api/locations"); // Updated API endpoint
+  const [apiEndpoint, setApiEndpoint] = useState("https://chatrgapi.sydfast.com//api/locations"); // Updated API endpoint
   const [showSettings, setShowSettings] = useState(false);
   const [deviceId, setDeviceId] = useState("");
   const [deviceName, setDeviceName] = useState(""); // New state for device name
@@ -33,7 +33,7 @@ export default function TrackingDashboard() {
   useEffect(() => {
     // Cargar config guardada
     (async () => {
-      const endpoint = (await AsyncStorage.getItem("api_endpoint")) || "https://apigps-gnip.onrender.com/api/locations";
+      const endpoint = (await AsyncStorage.getItem("api_endpoint")) || "https://chatrgapi.sydfast.com/api/locations";
       setApiEndpoint(endpoint);
       
       if (isWeb) {
